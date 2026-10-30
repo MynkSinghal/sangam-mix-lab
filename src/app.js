@@ -413,6 +413,8 @@ class Pair {
   }
 }
 
+/*DEEP*/
+
 /* =====================================================================
    3. Audio rendering
    ===================================================================== */
@@ -538,16 +540,30 @@ window.__sangamExport = () => ({ A: exportTrack(state.slots.A.track), B: exportT
 function setStatus(t) { $("#status").textContent = t; }
 function toast(t) { $("#toast").textContent = t; }
 
+async function addAnalyses(files) {
+  let n = 0;
+  for (const f of files) {
+    try { const J = JSON.parse(await f.text()); if (J && J.schema === "sangam-analysis/1") { const i = DEEP_LIB.findIndex(x => x.name === J.name && Math.abs(x.duration - J.duration) < 0.5); if (i >= 0) DEEP_LIB[i] = J; else DEEP_LIB.push(J); n++; } } catch (e) {}
+  }
+  if (!n) { setStatus("That isn't a Sangam analysis file (.sangam.json)."); return 0; }
+  let hit = 0;
+  ["A", "B"].forEach(k => { const sl = state.slots[k]; if (sl.buffer && !sl.deepJ) { const J = matchDeep(sl.buffer); if (J) { sl.deepJ = J; sl.track = null; hit++; } } });
+  setStatus(`Added ${n} analysis file${n > 1 ? "s" : ""}${hit ? `, matched ${hit} loaded song${hit > 1 ? "s" : ""}` : ". Now load the songs they belong to"}.`);
+  if (hit) await analyseLoaded();
+  return n;
+}
 async function handleFiles(list, target) {
-  const files = [...list].filter(f => /audio|m4a|mp3|wav|aac|flac|ogg/i.test(f.type + f.name));
-  if (!files.length) { setStatus("Those don't look like audio files. Pick .m4a or .mp3 songs."); return; }
+  const jsons = [...list].filter(f => /\.json$/i.test(f.name));
+  if (jsons.length) await addAnalyses(jsons);
+  const files = [...list].filter(f => !/\.json$/i.test(f.name) && /audio|m4a|mp3|wav|aac|flac|ogg/i.test(f.type + f.name));
+  if (!files.length) { if (!jsons.length) setStatus("Those don't look like audio files. Pick .m4a or .mp3 songs."); return; }
   const c = getCtx();
   const targets = target ? [target] : (files.length >= 2 ? ["A", "B"] : [!state.slots.A.buffer || state.demo ? "A" : "B"]);
   if (state.demo) exitDemo();
   for (let i = 0; i < Math.min(files.length, targets.length); i++) {
     const slot = state.slots[targets[i]], f = files[i];
     setStatus(`Reading ${f.name}…`);
-    try { slot.buffer = await decode(c, await f.arrayBuffer()); slot.file = f; slot.track = null; }
+    try { slot.buffer = await decode(c, await f.arrayBuffer()); slot.file = f; slot.track = null; slot.deepJ = matchDeep(slot.buffer); }
     catch (e) { setStatus(`Couldn't read ${f.name}. Try an .m4a or .mp3 file.`); return; }
   }
   renderSlots();
@@ -555,7 +571,7 @@ async function handleFiles(list, target) {
 }
 function exitDemo() {
   state.demo = false; $("#demoNote").hidden = true;
-  const blank = () => ({ file: null, buffer: null, track: null, spBpm: "", key: "" });
+  const blank = () => ({ file: null, buffer: null, track: null, deepJ: null, spBpm: "", key: "" });
   state.slots = { A: blank(), B: blank() }; state.pair = null; state.plans = []; state.cur = state.edit = null;
   $("#plans").innerHTML = ""; renderSlots();
 }
@@ -567,22 +583,30 @@ async function analyseLoaded() {
     const s = state.slots[k];
     if (!s.track) {
       const bpm = parseFloat(s.spBpm) || null;
-      s.track = await analyseTrack(s.buffer, cleanName(s.file), bpm, s.key, (t) => setStatus(`${cleanName(s.file)}: ${t}`));
+      if (s.deepJ) {
+        const sp = s.deepJ.spotify || {};
+        if (!s.key && sp.key) s.key = sp.key;
+        if (!bpm && sp.bpm) s.typedBpm = true;
+        s.track = trackFromDeep(s.deepJ, bpm, s.key);
+      } else s.track = await analyseTrack(s.buffer, cleanName(s.file), bpm, s.key, (t) => setStatus(`${cleanName(s.file)}: ${t}`));
       if (!s.spBpm) s.spBpm = String(s.track.spBpm);
     }
   }
   renderSlots();
   if (state.slots.A.track && state.slots.B.track) {
-    setStatus("Searching every preset, setting, length and position…"); await new Promise(r => setTimeout(r, 30)); buildPair();
+    const deep = state.slots.A.track.deep && state.slots.B.track.deep;
+    setStatus(deep ? "Measuring every window position, length, preset and menu option against the stems…" : "Searching every preset, setting, length and position…"); await new Promise(r => setTimeout(r, 30)); buildPair();
     const missing = ["A", "B"].filter(k => !state.slots[k].typedBpm);
-    setStatus(missing.length ? "Done. Check each Spotify BPM box matches what Spotify shows (we guessed); the bars depend on it." : "Done. Pick a transition and press Play.");
+    const quick = ["A", "B"].filter(k => !state.slots[k].track.deep).map(k => k === "A" ? "the first song" : "the next song");
+    setStatus((missing.length ? "Done. Check each Spotify BPM box matches what Spotify shows (we guessed); the bars depend on it." : "Done. Pick a transition and press Play.")
+      + (quick.length ? ` No deep analysis for ${quick.join(" or ")}, so this is a quick estimate; add its .sangam.json for a measured plan.` : ""));
   }
   else setStatus("Now add the next song.");
 }
 function buildPair() {
   const A = state.slots.A.track, B = state.slots.B.track;
   A.spKey = state.slots.A.key; B.spKey = state.slots.B.key;
-  state.pair = new Pair(A, B);
+  state.pair = (A.deep && B.deep) ? new DeepPair(A, B) : new Pair(A, B);
   state.plans = state.pair.pickPlans();
   selectPlan(state.plans[0].key);
   renderAll();
@@ -591,6 +615,7 @@ function reBar(k) {
   const s = state.slots[k]; if (!s.track) return;
   const bpm = parseFloat(s.spBpm); if (!bpm) return;
   s.track.spBpm = bpm; s.track.spKey = s.key;
+  if (s.track.deep) { deepBars(s.track); return; }
   if (s.track.raw) { // re-fit the beat grid using Spotify's tempo as the hint, then rebuild bars
     const g = fitGrid(s.track.od, estimateTempo(s.track.od, bpm));
     s.track.beat = g.p; s.track.bpmDet = 60 / g.p; s.track.phase = g.ph;
@@ -606,6 +631,8 @@ function renderSlots() {
     el.querySelector(".fname").textContent = T ? T.name : (s.file ? cleanName(s.file) : (k === "A" ? "Song playing now" : "Next song"));
     el.querySelector(".finfo").textContent = T ? `${fmt(T.duration)} · we hear ${T.bpmDet.toFixed(1)} BPM · bar ${T.bar_s.toFixed(2)} s` : (s.buffer ? "analysing…" : "no file yet");
     el.classList.toggle("ok", !!T);
+    const bd = el.querySelector(".badge"); bd.hidden = !T; bd.className = "badge" + (T && T.deep ? " deep" : "");
+    bd.textContent = T && T.deep ? `Deep analysis · stems + beat grid${s.buffer ? "" : " · load the song to hear it"}` : "Quick estimate · no stems";
     const bi = el.querySelector(".bpm"), ki = el.querySelector(".key");
     if (document.activeElement !== bi) bi.value = s.spBpm; if (document.activeElement !== ki) ki.value = s.key;
   });
@@ -628,12 +655,18 @@ function renderPlans() {
     const tm = state.pair.timing(p), e = p.eval, pk = presetOf(p.settings);
     const tags = [];
     if (p.tag === "best") tags.push(`<span class="tag best">Best</span>`);
+    if (e.deep) {
+      if (e.pass) tags.push(`<span class="tag pass">Passes every check</span>`);
+      if (e.m.chopA != null || (e.m.chopB != null && e.m.chopBFast)) tags.push(`<span class="tag bad">Cuts a line</span>`);
+      if (e.m.skipBVoc > 15 || e.m.lostAVoc > 20) tags.push(`<span class="tag warn">Skips vocals</span>`);
+    }
     if (!pk) tags.push(`<span class="tag custom">Custom menus</span>`);
     if (usesUnverified(p.settings)) tags.push(`<span class="tag warn">Unverified option</span>`);
     if (e.terms.vocal_clash > 0.3) tags.push(`<span class="tag bad">Voices overlap</span>`);
     return `<button class="plan" data-key="${p.key}" aria-pressed="${state.cur && state.cur.key === p.key}">
       <span class="ptop"><span class="pname">${p.title}</span><span class="pscore">${e.score.toFixed(1)}</span></span>
       <span class="pmeta">${p.L} bars · ${A_NAME()} ${fmt(tm.aT0)} → ${B_NAME()} ${fmt(tm.bT0)}</span>
+      ${e.deep ? `<span class="psub">${pk ? OPT.presets[pk].label + " preset" : "Custom menus"} · voices ${e.m.voc.toFixed(1)} s · bass ${e.m.bass.toFixed(1)} s · dip ${e.m.dip.toFixed(1)} dB</span>` : ""}
       ${tags.length ? `<span class="tags">${tags.join("")}</span>` : ""}</button>`;
   }).join("");
   host.querySelectorAll(".plan").forEach(b => b.addEventListener("click", () => selectPlan(b.dataset.key)));
@@ -783,6 +816,9 @@ function drawEditor() {
   g.font = "600 11px 'IBM Plex Sans', system-ui"; g.textBaseline = "top";
   const mark = (t, tAt0, y0, y1, label, color) => { const x = px0 + (t - tAt0) / (secPerPx * (tAt0 === tm.bT0 ? P.rate : 1)); if (x < px0 - 2 || x > px1 + 2) return; g.strokeStyle = color; g.setLineDash([4, 4]); g.lineWidth = 1.5; g.beginPath(); g.moveTo(x, y0); g.lineTo(x, y1); g.stroke(); g.setLineDash([]); g.fillStyle = color; g.fillText(label, Math.min(x + 4, px1 - 80), y0 + 2); };
   mark(P.A.soundEnd, tm.aT0, aTop, aBot, "sound ends", "#f2a7e6");
+  // vocal lines from the separated vocal stem (Spotify doesn't show these; they explain the choice)
+  const vlines = (T, t0, rate, y) => { if (!T.deep) return; g.fillStyle = "rgba(255,120,190,0.9)"; T.deep.lines.forEach(([a, b]) => { const x0 = px0 + (a - t0) / (secPerPx * rate), x1 = px0 + (b - t0) / (secPerPx * rate); if (x1 < 0 || x0 > w) return; g.fillRect(Math.max(0, x0), y, Math.min(w, x1) - Math.max(0, x0), 3); }); g.fillStyle = "rgba(255,120,190,0.95)"; g.font = "600 10px 'IBM Plex Mono', monospace"; g.textBaseline = "alphabetic"; g.fillText("vocals", 6, y - 4); };
+  vlines(P.A, tm.aT0, 1, aBot - 4); vlines(P.B, tm.bT0, P.rate, bBot - 4);
   if (P.B.drop) mark(P.B.bars.t0[P.B.drop - 1], tm.bT0, bTop, bBot, "drums in", "#7fd3ff");
   // playhead
   if (state.playheadT != null) { const x = px0 + (state.playheadT - tm.aT0) / secPerPx; if (x >= 0 && x <= w) { g.fillStyle = "#1ed760"; g.fillRect(x - 2, top, 4, pnlH); } }
@@ -801,6 +837,13 @@ const TERM_NAMES = { mud: "Two basslines", vocal_clash: "Two vocals / melodies",
 const BON_NAMES = { drop_landing: "Lands on the drums", similarity: "Similar sound", effect_fit: "Effect covers a gap" };
 function renderWhy() {
   const e = state.edit.eval, P = state.pair, tm = P.timing(state.edit);
+  if (e.deep) {
+    $("#bars").innerHTML = deepMetrics(state.edit);
+    $("#reasons").innerHTML = deepWhy(P, state.edit).map(([w, t]) => `<li class="${w ? "warn" : ""}">${t}</li>`).join("");
+    $("#source").textContent = `Measured from AI-separated stems (Demucs) and a Beat This! beat grid (${Math.round(100 * Math.min(P.A.deep.fit, P.B.deep.fit))} % of detected beats on the grid). The score reflects how clean those measurements are.`;
+    return;
+  }
+  $("#source").textContent = "";
   const rows = Object.keys(W).map(k => [TERM_NAMES[k], e.terms[k] * W[k] * 100, "bad"]).filter(r => r[1] > 0.05)
     .concat(Object.keys(V).map(k => [BON_NAMES[k], e.bonus[k] * V[k] * 100, "good"]).filter(r => r[1] > 0.05)).sort((a, b) => b[1] - a[1]);
   $("#bars").innerHTML = rows.map(([n, v, k]) => `<div class="sbar"><span>${n}</span><span class="trk"><span class="fill ${k}" style="width:${Math.min(100, v * 10)}%"></span></span><span class="v">${k === "good" ? "+" : "−"}${v.toFixed(1)}</span></div>`).join("") || `<p class="muted">No penalties.</p>`;
@@ -816,12 +859,19 @@ function renderWhy() {
   if (e.terms.energy_hole >= 0.25) out.push([1, `The mix goes quiet in the middle before the next song picks up.`]);
   if (e.terms.loud_bump >= 0.3) out.push([1, `Both songs are loud at once; it may feel crowded.`]);
   if (usesUnverified(state.edit.settings)) out.push([1, `Uses a menu option whose exact curve isn't confirmed yet; preview it in Spotify.`]);
-  out.push([0, `Detection runs in your browser (no AI stem separation), so vocals and sections are estimates.`]);
+  out.push([1, `Quick estimate: no stems for ${!P.A.deep && !P.B.deep ? "either song" : !P.A.deep ? A_NAME() : B_NAME()}, so vocals and sections are guesses from frequency bands. Add a .sangam.json for a measured plan.`]);
   $("#reasons").innerHTML = out.map(([w, t]) => `<li class="${w ? "warn" : ""}">${t}</li>`).join("");
 }
 function landmarkText(P, tm, p) {
   const out = [];
   const barInWin = (T, t, t0, rate) => (t - t0) / (P.A.bar_s * rate);
+  const where = (b) => Math.abs(b) < 0.15 ? "right at the left edge" : Math.abs(b - p.L) < 0.15 ? "right at the right edge" : b < 0 ? `${(+(-b).toFixed(1))} bars before the left edge` : b > p.L ? `${(+(b - p.L).toFixed(1))} bars after the right edge` : `${(+b.toFixed(1))} of the ${p.L} bars in`;
+  if (P.deep && p.eval && p.eval.m) {
+    const m = p.eval.m;
+    if (m.aLine) { const b = barInWin(P.A, m.aLine[1], tm.aT0, 1); if (b > -2 && b < p.L + 0.5) out.push(`${A_NAME()}'s last line before the switch ends ${where(b)} (${fmt(m.aLine[1])}; the pink "vocals" strip in the top lane)`); }
+    if (m.bLine && m.bQuiet) { const b = barInWin(P.B, m.bLine[0], tm.bT0, P.rate); if (b > -0.5 && b < p.L + 3) out.push(`${B_NAME()}'s vocals start ${where(b)} (${fmt(m.bLine[0])})`); }
+    return out;
+  }
   if (P.B.drop) { const b = barInWin(P.B, P.B.bars.t0[P.B.drop - 1], tm.bT0, P.rate); if (b >= -0.1 && b <= p.L + 0.1) out.push(`${B_NAME()}'s drums (the first big blue spikes in the bottom lane) start ${b < 0.1 ? "right at the left edge" : b > p.L - 0.1 ? "right at the right edge" : `${(+b.toFixed(1))} of the ${p.L} bars in`}`); }
   const ae = barInWin(P.A, P.A.soundEnd, tm.aT0, 1); if (ae >= 0 && ae <= p.L) out.push(`${A_NAME()}'s waveform fades out ${ae > p.L - 0.1 ? "at the right edge" : `${(+ae.toFixed(1))} bars into the window`}`);
   return out;
@@ -948,12 +998,25 @@ function init() {
   });
   document.querySelectorAll("[data-nudge]").forEach(b => b.addEventListener("click", () => { const [lane, d] = b.dataset.nudge.split(":"); nudge(lane, +d); }));
   let rto; window.addEventListener("resize", () => { clearTimeout(rto); rto = setTimeout(() => { drawEditor(); drawStrips(); }, 120); });
-  if (DEMO) {
-    state.demo = true;
-    state.slots.A = { file: null, buffer: null, track: trackFromDemo(DEMO.A), spBpm: String(DEMO.A.spBpm), key: DEMO.A.spKey };
-    state.slots.B = { file: null, buffer: null, track: trackFromDemo(DEMO.B), spBpm: String(DEMO.B.spBpm), key: DEMO.B.spKey };
-    renderSlots(); buildPair(); $("#demoNote").hidden = false;
-    setStatus("Showing an example. Load two songs to plan your own transition.");
+  $("#addAnalysis").addEventListener("click", () => $("#analysisInput").click());
+  $("#analysisInput").addEventListener("change", e => { if (e.target.files.length) addAnalyses([...e.target.files]); e.target.value = ""; });
+  const examples = [["OG Lucifer - Terey Papa", "Seedhe Maut - TT"], ["The Weeknd, Playboi Carti - Timeless", "KAROL G, Judeline, rusowsky - BbY WOW"]]
+    .map(([a, b]) => [DEEP_LIB.find(J => J.name === a), DEEP_LIB.find(J => J.name === b)]).filter(([a, b]) => a && b);
+  if (examples.length) {
+    const show = (i) => {
+      const [JA, JB] = examples[i];
+      state.demo = true;
+      state.slots.A = { file: null, buffer: null, track: trackFromDeep(JA), deepJ: JA, spBpm: "", key: (JA.spotify || {}).key || "" };
+      state.slots.B = { file: null, buffer: null, track: trackFromDeep(JB), deepJ: JB, spBpm: "", key: (JB.spotify || {}).key || "" };
+      ["A", "B"].forEach(k => { const sl = state.slots[k]; sl.spBpm = String(sl.track.spBpm); sl.typedBpm = !!(sl.deepJ.spotify || {}).bpm; });
+      renderSlots(); buildPair();
+      const note = $("#demoNote"); note.hidden = false;
+      note.innerHTML = `Example: ${shortName(JA.name)} → ${shortName(JB.name)} from the built-in deep analyses. Load those two songs to hear it (they're recognised automatically), or load any two songs. `
+        + examples.map(([a, b], j) => j === i ? "" : `<button class="btn" data-ex="${j}" style="padding:6px 10px;font-size:12.5px">Show ${shortName(a.name)} → ${shortName(b.name)}</button>`).join(" ");
+      note.querySelectorAll("[data-ex]").forEach(bn => bn.addEventListener("click", () => show(+bn.dataset.ex)));
+      setStatus(["A", "B"].some(k => !state.slots[k].typedBpm) ? "Showing an example. Spotify's BPM for these wasn't given, so check the BPM boxes against Spotify." : "Showing an example. Load two songs to plan your own.");
+    };
+    show(0);
   }
   if (document.fonts) document.fonts.ready.then(() => { drawEditor(); drawStrips(); });
 }

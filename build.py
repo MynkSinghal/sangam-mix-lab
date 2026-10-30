@@ -5,8 +5,11 @@ shell = open(f"{here}/src/shell.html").read()
 opts = open(f"{here}/src/spotify_mix_options.json").read()
 demo_path = f"{here}/src/demo.json"
 demo = open(demo_path).read() if (os.path.exists(demo_path) and "--no-demo" not in sys.argv) else "null"
-app = open(f"{here}/src/app.js").read()
-body = shell.replace("/*OPTIONS*/null", json.dumps(json.loads(opts), separators=(",", ":"))).replace("/*DEMO*/null", demo).replace("/*APP*/", app)
+app = open(f"{here}/src/app.js").read().replace("/*DEEP*/", open(f"{here}/src/deep.js").read())
+import glob
+lib = [json.load(open(f)) for f in sorted(glob.glob(f"{here}/src/deep/*.sangam.json"))]
+deeplib = json.dumps(lib, separators=(",", ":"))
+body = shell.replace("/*OPTIONS*/null", json.dumps(json.loads(opts), separators=(",", ":"))).replace("/*DEMO*/null", demo).replace("/*DEEPLIB*/[]", deeplib).replace("/*APP*/", app)
 os.makedirs(f"{here}/dist", exist_ok=True)
 # artifact version: body only (the host wraps it). Vercel version: full document.
 open(f"{here}/dist/artifact.html", "w").write(body)

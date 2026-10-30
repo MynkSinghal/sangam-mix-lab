@@ -88,6 +88,13 @@ ul, ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
 li.warn { color: var(--warn); }
 .stamp { font: 500 12.5px var(--mono); background: var(--surface-2); padding: 1px 5px; border-radius: 5px; white-space: nowrap; }
 .note { font-size: 12.5px; color: var(--faint); }
+.mets { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 6px; }
+.met { background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 7px 9px; display: grid; gap: 2px; font-size: 12px; color: var(--muted); }
+.met b { font: 600 15px var(--mono); color: var(--fg); } .met.good b { color: var(--good); } .met.bad b { color: var(--bad); }
+.badge { justify-self: start; font: 600 10.5px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; padding: 5px 7px; border-radius: 6px; background: var(--surface); border: 1px solid var(--line); color: var(--warn); }
+.badge.deep { color: var(--good); border-color: color-mix(in srgb, var(--good) 40%, var(--line)); }
+.psub { font-size: 12.5px; color: var(--muted); }
+.tag.pass { color: var(--good); }
 @media (max-width: 420px) { .sbar { grid-template-columns: 118px minmax(0, 1fr) 38px; } .slot .row { grid-template-columns: 1fr 1fr; } .slot .row .pick { grid-column: 1 / -1; } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
@@ -96,38 +103,40 @@ li.warn { color: var(--warn); }
   <header style="display:grid;gap:6px">
     <span class="kicker">Sangam · Spotify Mix planner</span>
     <h1>Plan the perfect transition</h1>
-    <p class="muted" style="margin:0;max-width:62ch">Load the song that's ending and the next one. The page finds the beat, bars and sections, tries every preset, menu option, length and position, and shows the best transition exactly like Spotify's editor, with a preview you can hear.</p>
+    <p class="muted" style="margin:0;max-width:64ch">Load the song that's ending and the next one. With a deep analysis (AI-separated vocals, drums, bass and melody plus a pro beat tracker) the page measures every window position, length, preset and menu option: whether two voices or basslines overlap, whether a line gets cut mid-word, whether it lands on the phrase, how loudness and harmony hold up. Then it shows the winner laid out like Spotify's editor, with a preview you can hear.</p>
   </header>
 
   <section class="card loader" id="loader" aria-label="Your two songs">
     <div class="slots">
       <div class="slot" id="slotA">
         <span class="lane">Playing now (top lane)</span>
-        <span class="fname">Song playing now</span><span class="finfo">no file yet</span>
+        <span class="fname">Song playing now</span><span class="finfo">no file yet</span><span class="badge" hidden></span>
         <div class="row">
           <label class="field">Spotify BPM<input class="bpm" id="bpmA" type="number" inputmode="decimal" placeholder="e.g. 60"></label>
           <label class="field">Spotify key<input class="key" id="keyA" type="text" placeholder="e.g. 10A" maxlength="3" autocapitalize="characters"></label>
           <button class="btn pick">Choose song</button>
         </div>
-        <input type="file" accept="audio/*,.m4a,.mp3,.wav,.aac,.flac" hidden>
+        <input type="file" accept="audio/*,.m4a,.mp3,.wav,.aac,.flac,.json" hidden>
       </div>
       <div class="slot" id="slotB">
         <span class="lane">Next song (bottom lane)</span>
-        <span class="fname">Next song</span><span class="finfo">no file yet</span>
+        <span class="fname">Next song</span><span class="finfo">no file yet</span><span class="badge" hidden></span>
         <div class="row">
           <label class="field">Spotify BPM<input class="bpm" id="bpmB" type="number" inputmode="decimal" placeholder="e.g. 60"></label>
           <label class="field">Spotify key<input class="key" id="keyB" type="text" placeholder="e.g. 10A" maxlength="3" autocapitalize="characters"></label>
           <button class="btn pick">Choose song</button>
         </div>
-        <input type="file" accept="audio/*,.m4a,.mp3,.wav,.aac,.flac" hidden>
+        <input type="file" accept="audio/*,.m4a,.mp3,.wav,.aac,.flac,.json" hidden>
       </div>
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <button class="btn" id="swap">Swap songs</button>
+      <button class="btn" id="addAnalysis">Add analysis files</button>
+      <input type="file" id="analysisInput" accept=".json,application/json" multiple hidden>
       <span class="status" id="status" role="status">Load two songs to start.</span>
     </div>
-    <p class="note" style="margin:0">Type the BPM and key exactly as Spotify shows them in Mix mode: the BPM sets the bar length, so the green bar ticks here match Spotify's. Your audio stays on this device.</p>
-    <p class="demo" id="demoNote" hidden>Example: Timeless → BbY WOW, analysed on this page. Load two songs to plan your own; to hear this one, load those two files.</p>
+    <p class="note" style="margin:0">Type the BPM and key exactly as Spotify shows them in Mix mode: the BPM sets the bar length, so the green bar ticks here match Spotify's. Songs with a deep analysis (built in, or a <span class="stamp">.sangam.json</span> from <span class="stamp">analysis/deep_analyse.py</span>) are recognised automatically; anything else gets a quick in-browser estimate. Your audio stays on this device.</p>
+    <p class="demo" id="demoNote" hidden></p>
   </section>
 
   <div class="layout">
@@ -160,16 +169,17 @@ li.warn { color: var(--warn); }
 
       <div class="two">
         <section class="card"><h2>Recreate it in Spotify</h2><ol id="steps"></ol><p class="note" id="stamps"></p></section>
-        <section class="card"><h2>Why this one</h2><div id="bars" style="display:grid;gap:6px"></div><ul id="reasons"></ul></section>
+        <section class="card"><h2>Why this one</h2><div id="bars" class="mets"></div><ul id="reasons"></ul><p class="note" id="source"></p></section>
       </div>
     </div>
     <aside class="side" style="display:grid;gap:10px;min-width:0">
       <h2>Transitions to try</h2>
       <div class="plans" id="plans"></div>
-      <p class="note">Every option is scored for two basslines or vocals at once, timing off the phrase, energy dips and jumps, tempo and key clashes, and landing on the next song's drums.</p>
+      <p class="note" id="sideNote">Each candidate is measured from the separated stems: voices or basslines at the same time, lines cut mid-word, phrase fit, loudness, harmony and how much of each song gets skipped. Ones that break a rule are ranked below ones that don't.</p>
     </aside>
   </div>
 </div>
 <script>window.SANGAM_OPTIONS = /*OPTIONS*/null;</script>
 <script>window.SANGAM_DEMO = /*DEMO*/null;</script>
+<script>window.SANGAM_DEEP = /*DEEPLIB*/[];</script>
 <script>/*APP*/</script>
