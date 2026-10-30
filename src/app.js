@@ -307,16 +307,16 @@ class Pair {
   phraseStarts(T) { const st = []; T.sections.forEach(s => { for (let x = s.bar0; x <= s.bar1; x += 4) st.push(x); }); return st; }
   timing(p) {
     const A = this.A, B = this.B;
-    const aT0 = A.bars.t0[p.a_start - 1], Wd = p.L * A.bar_s, bT0 = B.bars.t0[p.b_start - 1];
+    const aT0 = A.bar0 + (p.a_start - 1) * A.bar_s, Wd = p.L * A.bar_s, bT0 = B.bar0 + (p.b_start - 1) * B.bar_s;
     return { aT0, aT1: aT0 + Wd, bT0, bT1: bT0 + Wd * this.rate, W: Wd };
   }
   evaluate(p) {
-    const { A, B } = this, s = p.settings, L = p.L, n = 16 * L, ln = lanes(s, L);
+    const { A, B } = this, s = p.settings, L = p.L, pa = Math.round(p.a_start), pb = Math.round(p.b_start), n = 16 * L, ln = lanes(s, L);
     const preset = presetOf(s);
     const series = (T, key, b0) => { const v = T.bars[key], out = new Float64Array(n); for (let k = 0; k < n; k++) { const idx = b0 - 1 + (k + 0.5) / n * L; out[k] = v[clamp(Math.floor(idx), 0, v.length - 1)] || 0; } return out; };
-    const vA = series(A, "mids", p.a_start), vB = series(B, "mids", p.b_start);
-    const bA = series(A, "bass", p.a_start), bB = series(B, "bass", p.b_start);
-    const eA = series(A, "energy", p.a_start), eB = series(B, "energy", p.b_start);
+    const vA = series(A, "mids", pa), vB = series(B, "mids", pb);
+    const bA = series(A, "bass", pa), bB = series(B, "bass", pb);
+    const eA = series(A, "energy", pa), eB = series(B, "energy", pb);
     const t = {};
     let mud = 0, vc = 0, both = 0, maxTot = -1, minEff = 9, key = 0;
     const tailOut = ln.fxDef && ln.fxDef.tail === "out" ? 1 : 0;
@@ -336,16 +336,16 @@ class Pair {
     }
     t.mud = mud / n * 2; t.vocal_clash = vc / n * 1.5;
     const pd = (st, bar) => st.reduce((m, x) => Math.min(m, Math.abs(bar - x)), 99);
-    t.phrase_misalign = Math.min(1, (pd(this.phrA, p.a_start) + 0.5 * pd(this.phrA, p.a_start + L) + pd(this.phrB, p.b_start) + 0.5 * pd(this.phrB, p.b_start + L)) / 4);
-    let sa = 0, sb = 0; for (let k = 0; k < L; k++) { sa += SEC_A[this.labA[clamp(p.a_start - 1 + k, 0, A.n_bars - 1)]] ?? 0.5; sb += SEC_B[this.labB[clamp(p.b_start - 1 + k, 0, B.n_bars - 1)]] ?? 0.5; }
+    t.phrase_misalign = Math.min(1, (pd(this.phrA, pa) + 0.5 * pd(this.phrA, pa + L) + pd(this.phrB, pb) + 0.5 * pd(this.phrB, pb + L)) / 4);
+    let sa = 0, sb = 0; for (let k = 0; k < L; k++) { sa += SEC_A[this.labA[clamp(pa - 1 + k, 0, A.n_bars - 1)]] ?? 0.5; sb += SEC_B[this.labB[clamp(pb - 1 + k, 0, B.n_bars - 1)]] ?? 0.5; }
     sa /= L; sb /= L; if (preset === "slam" || s.volume === "centre_cut") sb *= 0.3;
     t.section_fit = (sa + sb) / 2;
     t.tempo_risk = Math.min(1, this.tempoGapPct / 10 * (both / n) * L / 8);
     t.key_risk = kr * key / n;
     t.loud_bump = clamp(maxTot - 1.15, 0, 1);
-    const preA = A.bars.energy[Math.max(0, p.a_start - 2)], postB = B.bars.energy[Math.min(B.n_bars - 1, p.b_start - 1 + L)];
+    const preA = A.bars.energy[Math.max(0, pa - 2)], postB = B.bars.energy[Math.min(B.n_bars - 1, pb - 1 + L)];
     t.energy_hole = Math.max(0, 0.6 * Math.min(preA, Math.max(postB, 0.4)) - minEff) / 0.6;
-    let eout = 0; for (let k = 0; k < L; k++) eout += A.bars.energy[clamp(p.a_start - 1 + k, 0, A.n_bars - 1)]; eout /= L;
+    let eout = 0; for (let k = 0; k < L; k++) eout += A.bars.energy[clamp(pa - 1 + k, 0, A.n_bars - 1)]; eout /= L;
     t.arc_fit = Math.min(1, Math.abs(postB - eout));
     const tm = this.timing(p);
     const skipEnd = Math.max(0, A.soundEnd - tm.aT1), skipIntro = Math.max(0, tm.bT0 - B.soundStart);
@@ -353,10 +353,10 @@ class Pair {
     t.skip_end = Math.min(1, skipEnd / 60);     // cutting the outgoing song early loses its ending
     t.skip_intro = Math.min(1, skipIntro / 60); // skipping into the next song is common, so it costs less
     const bon = {};
-    const endBar = (preset === "slam" || s.volume === "centre_cut") ? p.b_start + L / 2 : p.b_start + L;
+    const endBar = (preset === "slam" || s.volume === "centre_cut") ? pb + L / 2 : pb + L;
     bon.drop_landing = B.drop ? 1 - Math.min(1, Math.abs(B.drop - endBar) / 2) : 0;
     let sim = 0; const ks = ["energy", "bass", "mids", "high", "drums"];
-    for (let k = 0; k < L; k++) ks.forEach(key2 => { sim += 1 - Math.abs((A.bars[key2][clamp(p.a_start - 1 + k, 0, A.n_bars - 1)] || 0) - (B.bars[key2][clamp(p.b_start - 1 + k, 0, B.n_bars - 1)] || 0)); });
+    for (let k = 0; k < L; k++) ks.forEach(key2 => { sim += 1 - Math.abs((A.bars[key2][clamp(pa - 1 + k, 0, A.n_bars - 1)] || 0) - (B.bars[key2][clamp(pb - 1 + k, 0, B.n_bars - 1)] || 0)); });
     bon.similarity = sim / (L * ks.length);
     bon.effect_fit = (s.effect !== "none" && (t.energy_hole > 0.1 || kr >= 1 || this.tempoGapPct > 10)) ? 1 : 0;
     let sc = 1; for (const k in W) sc -= W[k] * t[k]; for (const k in V) sc += V[k] * bon[k];
@@ -430,11 +430,16 @@ function unlockAudio() {
 ["pointerdown", "touchend", "keydown", "click"].forEach(ev => document.addEventListener(ev, unlockAudio, { capture: true, passive: true }));
 const decode = (c, ab) => new Promise((res, rej) => { const p = c.decodeAudioData(ab, res, rej); if (p && p.then) p.then(res, rej); });
 function automate(param, values, t0, dur, before, after) {
-  param.value = before; param.setValueAtTime(before, 0); param.setValueCurveAtTime(values, t0, dur);
+  const n = values.length, step = Math.max(1, Math.floor(n / 96));
+  param.setValueAtTime(before, 0);
+  param.setValueAtTime(values[0], t0);
+  for (let i = step; i < n - 1; i += step) param.linearRampToValueAtTime(values[i], t0 + dur * i / (n - 1));
+  param.linearRampToValueAtTime(values[n - 1], t0 + dur);
   if (after !== undefined) param.setValueAtTime(after, t0 + dur + 0.01);
 }
 const sampleCurve = (fn, n, map = v => v) => { const a = new Float32Array(n); for (let k = 0; k < n; k++) a[k] = map(fn(k / (n - 1))); return a; };
-function chain(c, src, lane, ln, t0, Wd, n) {
+function chain(c, src, lane, ln, t0, Wd, n, safe) {
+  if (safe) { const pass = c.createGain(); src.connect(pass); const vol = c.createGain(), vv = sampleCurve(lane === "A" ? ln.volA : ln.volB, n); automate(vol.gain, vv, t0, Wd, vv[0]); pass.connect(vol); return { post: pass, out: vol }; }
   const P = OPT.params, sum = c.createGain();
   const bq = (type, f) => { const b = c.createBiquadFilter(); b.type = type; b.frequency.value = f; b.Q.value = Math.SQRT1_2; return b; };
   const bands = {
@@ -474,7 +479,7 @@ function attachFx(c, from, ln, t0, Wd, master, beatA) {
   if (fx.tail === "cut") { ret.gain.setValueAtTime(1, 0); ret.gain.setValueAtTime(1, t0 + Wd - 0.02); ret.gain.linearRampToValueAtTime(0, t0 + Wd); }
   ret.connect(master);
 }
-async function renderTransition(pair, plan, bufA, bufB, lead) {
+async function renderTransition(pair, plan, bufA, bufB, lead, safe = false) {
   const c0 = getCtx(), sr = c0.sampleRate, A = pair.A;
   const tm = pair.timing(plan), s = plan.settings, ln = lanes(s, plan.L);
   const pre = lead, post = 8, tail = 3, total = pre + tm.W + post + tail;
@@ -486,22 +491,23 @@ async function renderTransition(pair, plan, bufA, bufB, lead) {
   master.connect(lim); lim.connect(c.destination);
   const beatA = A.bar_s / 4;
   const srcA = c.createBufferSource(); srcA.buffer = bufA;
-  const chA = chain(c, srcA, "A", ln, pre, tm.W, n); chA.out.connect(master);
+  const chA = chain(c, srcA, "A", ln, pre, tm.W, n, safe); chA.out.connect(master);
   srcA.start(Math.max(0, pre - tm.aT0), Math.max(0, tm.aT0 - pre));
   const loopDef = OPT.loop[s.loop];
   if (loopDef && loopDef.beats) {
     srcA.stop(pre);
     const lp = c.createBufferSource(); lp.buffer = bufA; lp.loop = true; lp.loopStart = tm.aT0; lp.loopEnd = tm.aT0 + loopDef.beats * beatA;
-    const chL = chain(c, lp, "A", ln, pre, tm.W, n); chL.out.connect(master);
+    const chL = chain(c, lp, "A", ln, pre, tm.W, n, safe); chL.out.connect(master);
     lp.start(pre, tm.aT0); lp.stop(pre + tm.W + 0.02);
     attachFx(c, chL.post, ln, pre, tm.W, master, beatA);
   } else { srcA.stop(pre + tm.W + 0.05); attachFx(c, chA.post, ln, pre, tm.W, master, beatA); }
   const srcB = c.createBufferSource(); srcB.buffer = bufB; srcB.playbackRate.value = pair.rate;
-  const chB = chain(c, srcB, "B", ln, pre, tm.W, n); chB.out.connect(master);
+  const chB = chain(c, srcB, "B", ln, pre, tm.W, n, safe); chB.out.connect(master);
   const bOff0 = tm.bT0 - pre * pair.rate;
   if (bOff0 >= 0) srcB.start(0, bOff0); else srcB.start(-bOff0 / pair.rate, 0);
   const out = await c.startRendering();
   let peak = 0; for (let ch = 0; ch < 2; ch++) { const d = out.getChannelData(ch); for (let i = 0; i < d.length; i++) { const v = Math.abs(d[i]); if (v > peak) peak = v; } }
+  if (peak < 1e-4 && !safe) return renderTransition(pair, plan, bufA, bufB, lead, true); // this browser rendered silence: retry with volume curves only
   const g = peak > 0 ? 0.891 / peak : 1; for (let ch = 0; ch < 2; ch++) { const d = out.getChannelData(ch); for (let i = 0; i < d.length; i++) d[i] *= g; }
   return { buffer: out, pre, W: tm.W, tm };
 }
@@ -903,6 +909,7 @@ function renderAll(full = true) {
   $("#dscore").innerHTML = `${e.eval.score.toFixed(1)}<small>/100</small>`;
   if (full) renderPlans(); else $("#plans").querySelectorAll(".plan").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.key === c.key)));
   renderPresetsRow(); renderMenus(); renderWhy(); renderSteps(); drawEditor(); drawStrips();
+  schedulePrerender();
   $("#chips").innerHTML = pairChips();
   ["#play", "#playlong", "#stop"].forEach(s => $(s).disabled = !(state.slots.A.buffer && state.slots.B.buffer && !state.demo));
   $("#clock").textContent = state.demo ? "Example: load both songs to hear it" : (state.slots.A.buffer && state.slots.B.buffer ? "Ready" : "Load both songs to listen");
@@ -921,42 +928,66 @@ function pairChips() {
 /* =====================================================================
    6. Playback
    ===================================================================== */
-const audioEl = new Audio(); audioEl.setAttribute("playsinline", "");
-async function play(lead) {
-  const sA = state.slots.A, sB = state.slots.B; if (!(sA.buffer && sB.buffer) || state.demo) return;
-  stopAudio(); const c = getCtx(); unlockAudio();
-  try { audioEl.muted = true; audioEl.play().catch(() => {}); audioEl.pause(); audioEl.muted = false; } catch (e) {}
-  toast("Rendering the transition…");
-  let r; try { r = await renderTransition(state.pair, state.edit, sA.buffer, sB.buffer, lead); }
-  catch (err) { toast(`Couldn't render this transition: ${err && err.message ? err.message : err}`); return; }
-  try { await c.resume(); } catch (e) {}
-  if (c.state === "running") {
-    const src = c.createBufferSource(); src.buffer = r.buffer; src.connect(c.destination);
-    const startAt = c.currentTime + 0.05; src.start(startAt);
-    state.playing = { kind: "web", src, startAt, r }; src.onended = () => { if (state.playing && state.playing.src === src) stopAudio(); };
-  } else {
-    try { if (audioEl.src) URL.revokeObjectURL(audioEl.src); audioEl.src = URL.createObjectURL(wavBlob(r.buffer)); await audioEl.play(); state.playing = { kind: "el", r }; audioEl.onended = () => stopAudio(); }
-    catch (err) { toast(`Your browser blocked audio (${c.state}). Tap Play again.`); return; }
-  }
-  toast(`Playing with a ${lead} s lead-in. No sound? Check the volume; on iPhone turn off Silent mode.`);
+const audioEl = document.getElementById("preview") || new Audio(); audioEl.setAttribute("playsinline", "");
+const LEAD_MAX = 20;
+const pre = { key: null, r: null, url: null, busy: null, want: null };
+let preTimer = null;
+function planKey(e) { return [state.slots.A.file && state.slots.A.file.name, state.slots.B.file && state.slots.B.file.name, e.a_start, e.b_start, e.L, MENUS.map(m => e.settings[m]).join(","), state.pair && state.pair.rate].join("|"); }
+function schedulePrerender() {
+  if (!(state.slots.A.buffer && state.slots.B.buffer && !state.demo && state.pair && state.edit)) return;
+  if (pre.key === planKey(state.edit) && (pre.r || pre.busy)) return;
+  clearTimeout(preTimer); preTimer = setTimeout(prerender, 200);
+}
+async function prerender() {
+  const key = planKey(state.edit);
+  if (pre.key === key && (pre.r || pre.busy)) return;
+  pre.key = key; pre.r = null; $("#prevNote").textContent = "Preparing the preview…";
+  const job = renderTransition(state.pair, state.edit, state.slots.A.buffer, state.slots.B.buffer, LEAD_MAX);
+  pre.busy = job;
+  let r = null;
+  try { r = await job; } catch (err) { if (pre.key === key) { pre.key = null; toast(`Couldn't render this transition: ${err && err.message ? err.message : err}`); } }
+  if (pre.busy === job) pre.busy = null;
+  if (!r || pre.key !== key) return;
+  if (pre.url) URL.revokeObjectURL(pre.url);
+  pre.url = URL.createObjectURL(wavBlob(r.buffer)); pre.r = r;
+  stopAudio(); audioEl.src = pre.url; audioEl.load();
+  $("#prevNote").textContent = `Preview ready: ${LEAD_MAX} s of ${A_NAME()}, the ${state.edit.L}-bar transition, then ${B_NAME()}.`;
+  if (pre.want != null) { const lead = pre.want; pre.want = null; startPlayback(lead, false); }
+}
+function startPlayback(lead, inTap) {
+  stopAudio();
+  try { audioEl.currentTime = Math.max(0, LEAD_MAX - lead); } catch (e) {}
+  state.playing = { kind: "el", r: pre.r };
+  const pr = audioEl.play();
+  if (pr && pr.catch) pr.catch(err => { state.playing = null; toast(inTap ? `The browser blocked audio (${err && err.name}). Use the player under the buttons.` : "Preview ready: tap Play again."); });
+  toast(`Playing with a ${lead} s lead-in.`);
   tick();
+}
+function play(lead) {
+  if (!(state.slots.A.buffer && state.slots.B.buffer) || state.demo) return;
+  if (pre.r && pre.key === planKey(state.edit)) { startPlayback(lead, true); return; }
+  pre.want = lead; toast("Preparing the preview, it starts in a moment…");
+  if (!(pre.busy && pre.key === planKey(state.edit))) prerender();
 }
 function tick() {
   if (!state.playing) return;
-  const c = getCtx(), { pre, W: Wd, tm } = state.playing.r;
-  const t = state.playing.kind === "el" ? audioEl.currentTime : c.currentTime - state.playing.startAt;
-  const aPos = tm.aT0 + (t - pre), bPos = tm.bT0 + (t - pre) * state.pair.rate;
+  const { pre: lead0, W: Wd, tm } = state.playing.r;
+  const t = audioEl.currentTime;
+  const aPos = tm.aT0 + (t - lead0), bPos = tm.bT0 + (t - lead0) * state.pair.rate;
   state.playheadT = aPos; state.playPos = { a: aPos <= state.pair.A.duration ? aPos : null, b: bPos >= 0 ? bPos : null };
-  const u = (t - pre) / Wd;
+  const u = (t - lead0) / Wd;
   $("#clock").innerHTML = `${A_NAME()} ${aPos <= state.pair.A.duration ? fmt(aPos) : "ended"} · ${B_NAME()} ${bPos >= 0 ? fmt(bPos) : "–"}<br>${u < 0 ? `transition in ${(-u * Wd).toFixed(1)} s` : u <= 1 ? `in transition · ${(u * 100).toFixed(0)} %` : "after the transition"}`;
   drawEditor(); drawStrips();
   state.raf = requestAnimationFrame(tick);
 }
 function stopAudio() {
-  if (state.playing) { try { state.playing.kind === "el" ? audioEl.pause() : state.playing.src.stop(); } catch (e) {} state.playing = null; }
+  if (state.playing) { try { audioEl.pause(); } catch (e) {} state.playing = null; }
   if (state.raf) cancelAnimationFrame(state.raf); state.raf = null; state.playheadT = null; state.playPos = null;
   if (state.pair) { drawEditor(); drawStrips(); if (!state.demo && state.slots.A.buffer && state.slots.B.buffer) $("#clock").textContent = "Ready"; }
 }
+audioEl.addEventListener("ended", () => stopAudio());
+audioEl.addEventListener("play", () => { if (!state.playing && pre.r) { state.playing = { kind: "el", r: pre.r }; tick(); } });
+audioEl.addEventListener("pause", () => { if (state.playing) { state.playing = null; if (state.raf) cancelAnimationFrame(state.raf); state.raf = null; } });
 async function soundCheck() {
   const c = getCtx(); unlockAudio(); try { await c.resume(); } catch (e) {}
   const o = c.createOscillator(), g = c.createGain(); o.frequency.value = 660; g.gain.value = 0.2; o.connect(g); g.connect(c.destination); o.start(); o.stop(c.currentTime + 0.4);
@@ -990,7 +1021,44 @@ function init() {
   $("#stop").addEventListener("click", stopAudio);
   $("#beep").addEventListener("click", soundCheck);
   $("#reset").addEventListener("click", () => selectPlan(state.cur.key));
+  // drag a lane sideways to slide that song through the window (snaps to Spotify beats on release);
+  // drag or tap an overview strip to jump the window there
+  const ed = $("#editor"); let drag = null, justDragged = false;
+  const setLanePos = (lane, v, final) => {
+    const P = state.pair, e = state.edit, T = lane === "A" ? P.A : P.B;
+    const max = lane === "A" ? T.n_bars - e.L + 1 : T.n_bars - e.L;
+    v = clamp(v, 1, Math.max(1, max)); if (final) v = Math.round(v * 4) / 4;
+    if (lane === "A") e.a_start = v; else e.b_start = v;
+    if (final) updateEdit(); else { stopAudio(); drawEditor(); drawStrips(); const tm = P.timing(e); $("#clock").textContent = `${A_NAME()} ${fmt(tm.aT0)} · ${B_NAME()} ${fmt(tm.bT0)}`; }
+  };
+  ed.addEventListener("pointerdown", ev => {
+    if (!laneGeom || !state.edit) return;
+    const r = ed.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
+    if (laneGeom.arrows && laneGeom.arrows.some(a => Math.abs(a.x - x) < 26 && Math.abs(a.y - y) < 28)) return;
+    const lane = (y >= laneGeom.aTop - 12 && y <= (laneGeom.aBot + laneGeom.bTop) / 2) ? "A" : (y > (laneGeom.aBot + laneGeom.bTop) / 2 && y <= laneGeom.bBot + 12) ? "B" : null;
+    if (!lane) return;
+    drag = { lane, x0: ev.clientX, start: lane === "A" ? state.edit.a_start : state.edit.b_start, pxPerBar: (laneGeom.px1 - laneGeom.px0) / state.edit.L, moved: false, id: ev.pointerId };
+  });
+  ed.addEventListener("pointermove", ev => {
+    if (!drag || ev.pointerId !== drag.id) return;
+    const dx = ev.clientX - drag.x0;
+    if (!drag.moved && Math.abs(dx) < 6) return;
+    if (!drag.moved) { drag.moved = true; try { ed.setPointerCapture(ev.pointerId); } catch (e) {} }
+    ev.preventDefault();
+    setLanePos(drag.lane, drag.start - dx / drag.pxPerBar, false); // drag left = later music slides into the window, like Spotify
+  });
+  const endDrag = ev => { if (!drag) return; const d = drag; drag = null; if (!d.moved) return; justDragged = true; setTimeout(() => { justDragged = false; }, 60); setLanePos(d.lane, d.lane === "A" ? state.edit.a_start : state.edit.b_start, true); };
+  ed.addEventListener("pointerup", endDrag); ed.addEventListener("pointercancel", endDrag);
+  [["#stripA", "A"], ["#stripB", "B"]].forEach(([sel, lane]) => {
+    const cv = $(sel); let down = false;
+    const at = ev => { const P = state.pair; if (!P || !state.edit) return null; const r = cv.getBoundingClientRect(), T = lane === "A" ? P.A : P.B; const t = clamp((ev.clientX - r.left) / r.width, 0, 1) * T.duration; return 1 + (t - T.bar0) / T.bar_s - state.edit.L / 2; };
+    cv.addEventListener("pointerdown", ev => { const v = at(ev); if (v == null) return; down = true; try { cv.setPointerCapture(ev.pointerId); } catch (e) {} setLanePos(lane, v, false); });
+    cv.addEventListener("pointermove", ev => { if (!down) return; const v = at(ev); if (v != null) setLanePos(lane, v, false); });
+    const up = ev => { if (!down) return; down = false; setLanePos(lane, lane === "A" ? state.edit.a_start : state.edit.b_start, true); };
+    cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
+  });
   $("#editor").addEventListener("click", ev => {
+    if (justDragged) return;
     if (!laneGeom || !laneGeom.arrows) return;
     const r = ev.currentTarget.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
     const hit = laneGeom.arrows.find(a => Math.abs(a.x - x) < 26 && Math.abs(a.y - y) < 28);
