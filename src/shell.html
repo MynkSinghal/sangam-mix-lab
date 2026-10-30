@@ -1,0 +1,175 @@
+<title>Sangam Mix Lab</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Analyse any two songs and get the best Spotify Mix transition, with a preview you can hear.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: phone-first single column (the user edits in Spotify on an iPhone): loader, transition list, a 1:1 replica of Spotify's editor
+   (overview strip, lanes, overview strip, presets, menus), then reasons and steps. Wider screens put the list beside the editor.
+   One deliberate dark look, matching Spotify's editor. */
+:root {
+  color-scheme: dark;
+  --bg: #0e0f12; --surface: #17191d; --surface-2: #202329; --line: #2b2f36;
+  --fg: #eceef1; --muted: #a0a6b0; --faint: #6f7680;
+  --accent: #1ed760; --good: #4fd18b; --warn: #f2b84b; --bad: #ef6b6b;
+  --vol: #41addf; --eq: #ffd035; --eq-pale: #d9c27a; --flt: #ef97ff; --fx: #dadada; --loop: #ffb547;
+  --display: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+  --body: "IBM Plex Sans", "Helvetica Neue", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font: 15px/1.5 var(--body); margin: 0;
+  padding-left: max(14px, env(safe-area-inset-left, 0px)); padding-right: max(14px, env(safe-area-inset-right, 0px)); padding-block: 18px 48px; }
+.wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 16px; }
+h1, h2 { font-family: var(--display); margin: 0; text-wrap: balance; }
+h1 { font-size: clamp(26px, 6vw, 40px); letter-spacing: -.01em; line-height: 1.05; }
+h2 { font-size: 18px; }
+.kicker { font: 500 11.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+.muted { color: var(--muted); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: grid; gap: 12px; min-width: 0; }
+.loader.drag { outline: 2px dashed var(--accent); }
+.slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+.slot { background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: grid; gap: 8px; min-width: 0; }
+.slot.ok { border-color: color-mix(in srgb, var(--good) 45%, var(--line)); }
+.slot .lane { font: 600 11px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
+.slot .fname { font-weight: 600; overflow-wrap: anywhere; }
+.slot .finfo { font: 12.5px/1.3 var(--mono); color: var(--muted); }
+.slot .row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; }
+.field { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+input[type=text], input[type=number], select { width: 100%; font: 15px var(--body); color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 9px 10px; min-width: 0; }
+.btn { font: 600 14px/1 var(--body); border-radius: 10px; padding: 11px 14px; border: 1px solid var(--line); background: var(--surface-2); color: var(--fg); cursor: pointer; white-space: nowrap; }
+.btn.primary { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.status { font: 13px/1.4 var(--mono); color: var(--muted); min-height: 18px; }
+.demo { font-size: 13.5px; color: var(--warn); }
+.layout { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 980px) { .layout { grid-template-columns: 320px minmax(0, 1fr); align-items: start; } .layout > .side { order: -1; } }
+.plans { display: grid; gap: 8px; }
+.plan { text-align: left; display: grid; gap: 4px; padding: 11px 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); color: var(--fg); cursor: pointer; font: inherit; }
+.plan[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--surface)); }
+.ptop { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.pname { font-weight: 600; font-size: 14px; }
+.pscore { font: 500 15px var(--mono); }
+.pmeta { font: 12px/1.35 var(--mono); color: var(--muted); }
+.tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.tag { font: 600 10px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; padding: 4px 6px; border-radius: 5px; background: var(--surface-2); color: var(--muted); }
+.tag.best { background: var(--accent); color: #062b14; } .tag.custom { color: var(--vol); } .tag.warn { color: var(--warn); } .tag.bad { color: var(--bad); }
+.ed { background: #121212; border-radius: 16px; padding: 10px 0; display: grid; gap: 10px; overflow: hidden; }
+.ed .stripwrap { padding: 0 10px; display: grid; gap: 4px; }
+.ed .striplab { font: 11.5px/1.3 var(--mono); color: var(--faint); }
+canvas { display: block; width: 100%; touch-action: manipulation; }
+.presets { display: flex; gap: 8px; overflow-x: auto; padding: 0 10px 4px; scrollbar-width: none; }
+.pchip { flex: 0 0 auto; min-width: 92px; font: 500 15px var(--body); padding: 12px 16px; border-radius: 12px; border: 0; background: #262626; color: #f2f2f2; cursor: pointer; }
+.pchip[aria-pressed="true"] { background: #f2f2f2; color: #111; }
+.pchip:disabled { opacity: .35; cursor: not-allowed; }
+.menus { display: grid; gap: 2px; padding: 0 10px; }
+.mrow { display: grid; grid-template-columns: 4px 76px minmax(0, 1fr); gap: 10px; align-items: center; padding: 6px 0; font-size: 15px; }
+.mrow i { width: 4px; height: 20px; border-radius: 2px; }
+.seg { display: flex; gap: 6px; flex-wrap: wrap; }
+.seg button { font: 500 14px var(--body); padding: 8px 12px; border-radius: 9px; border: 1px solid var(--line); background: var(--surface-2); color: var(--fg); cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.dhead { display: flex; justify-content: space-between; align-items: end; gap: 10px; flex-wrap: wrap; }
+.dscore { font: 600 26px var(--mono); } .dscore small { font-size: 13px; color: var(--muted); margin-left: 2px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font: 500 12px/1 var(--mono); padding: 6px 9px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); }
+.chip.good { color: var(--good); } .chip.bad { color: var(--bad); }
+.transport { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 0 10px; }
+.clock { font: 12.5px/1.35 var(--mono); color: var(--muted); margin-left: auto; text-align: right; }
+.toast { font: 12.5px/1.4 var(--mono); color: var(--muted); padding: 0 10px; min-height: 17px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12.5px; color: var(--muted); padding: 0 10px; }
+.legend i { display: inline-block; width: 16px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
+.two { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.sbar { display: grid; grid-template-columns: 150px minmax(0, 1fr) 42px; gap: 8px; align-items: center; font-size: 13px; }
+.sbar .trk { height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; display: block; }
+.sbar .fill { display: block; height: 100%; border-radius: 4px; } .fill.bad { background: var(--bad); } .fill.good { background: var(--good); }
+.sbar .v { font: 12px var(--mono); text-align: right; color: var(--muted); }
+ul, ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+li.warn { color: var(--warn); }
+.stamp { font: 500 12.5px var(--mono); background: var(--surface-2); padding: 1px 5px; border-radius: 5px; white-space: nowrap; }
+.note { font-size: 12.5px; color: var(--faint); }
+@media (max-width: 420px) { .sbar { grid-template-columns: 118px minmax(0, 1fr) 38px; } .slot .row { grid-template-columns: 1fr 1fr; } .slot .row .pick { grid-column: 1 / -1; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header style="display:grid;gap:6px">
+    <span class="kicker">Sangam · Spotify Mix planner</span>
+    <h1>Plan the perfect transition</h1>
+    <p class="muted" style="margin:0;max-width:62ch">Load the song that's ending and the next one. The page finds the beat, bars and sections, tries every preset, menu option, length and position, and shows the best transition exactly like Spotify's editor, with a preview you can hear.</p>
+  </header>
+
+  <section class="card loader" id="loader" aria-label="Your two songs">
+    <div class="slots">
+      <div class="slot" id="slotA">
+        <span class="lane">Playing now (top lane)</span>
+        <span class="fname">Song playing now</span><span class="finfo">no file yet</span>
+        <div class="row">
+          <label class="field">Spotify BPM<input class="bpm" id="bpmA" type="number" inputmode="decimal" placeholder="e.g. 60"></label>
+          <label class="field">Spotify key<input class="key" id="keyA" type="text" placeholder="e.g. 10A" maxlength="3" autocapitalize="characters"></label>
+          <button class="btn pick">Choose song</button>
+        </div>
+        <input type="file" accept="audio/*,.m4a,.mp3,.wav,.aac,.flac" hidden>
+      </div>
+      <div class="slot" id="slotB">
+        <span class="lane">Next song (bottom lane)</span>
+        <span class="fname">Next song</span><span class="finfo">no file yet</span>
+        <div class="row">
+          <label class="field">Spotify BPM<input class="bpm" id="bpmB" type="number" inputmode="decimal" placeholder="e.g. 60"></label>
+          <label class="field">Spotify key<input class="key" id="keyB" type="text" placeholder="e.g. 10A" maxlength="3" autocapitalize="characters"></label>
+          <button class="btn pick">Choose song</button>
+        </div>
+        <input type="file" accept="audio/*,.m4a,.mp3,.wav,.aac,.flac" hidden>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <button class="btn" id="swap">Swap songs</button>
+      <span class="status" id="status" role="status">Load two songs to start.</span>
+    </div>
+    <p class="note" style="margin:0">Type the BPM and key exactly as Spotify shows them in Mix mode: the BPM sets the bar length, so the green bar ticks here match Spotify's. Your audio stays on this device.</p>
+    <p class="demo" id="demoNote" hidden>Example: Timeless → BbY WOW, analysed on this page. Load two songs to plan your own; to hear this one, load those two files.</p>
+  </section>
+
+  <div class="layout">
+
+    <div style="display:grid;gap:16px;min-width:0">
+      <section class="card" aria-labelledby="dtitle" style="padding:12px 0 12px">
+        <div class="dhead" style="padding:0 14px">
+          <div style="display:grid;gap:3px"><span class="kicker" id="dkick">Selected transition</span><h2 id="dtitle">Transition</h2></div>
+          <div class="dscore" id="dscore"></div>
+        </div>
+        <div class="chips" id="chips" style="padding:0 14px"></div>
+        <div class="ed">
+          <div class="stripwrap"><canvas id="stripA" aria-label="Playing-now song overview with the transition window"></canvas><span class="striplab" id="stripALab"></span></div>
+          <canvas id="editor" aria-label="Transition editor, laid out like Spotify's"></canvas>
+          <div class="stripwrap"><canvas id="stripB" aria-label="Next song overview with the transition window"></canvas><span class="striplab" id="stripBLab"></span></div>
+          <div class="presets" id="presetRow" aria-label="Presets"></div>
+          <div class="menus" id="menus"></div>
+          <div class="legend"><span><i style="background:var(--vol)"></i>Volume</span><span><i style="background:var(--eq)"></i>EQ bass</span><span><i style="background:var(--flt)"></i>Filter</span><span><i style="background:var(--fx)"></i>Effect</span><span><i style="background:var(--accent)"></i>Bar tick</span></div>
+          <div class="transport">
+            <button class="btn primary" id="play" disabled>Play transition</button>
+            <button class="btn" id="playlong" disabled>20 s lead-in</button>
+            <button class="btn" id="stop" disabled>Stop</button>
+            <button class="btn" id="beep">Sound check</button>
+            <button class="btn" id="reset">Reset</button>
+            <div class="clock" id="clock"></div>
+          </div>
+          <div class="toast" id="toast" role="status"></div>
+        </div>
+      </section>
+
+      <div class="two">
+        <section class="card"><h2>Recreate it in Spotify</h2><ol id="steps"></ol><p class="note" id="stamps"></p></section>
+        <section class="card"><h2>Why this one</h2><div id="bars" style="display:grid;gap:6px"></div><ul id="reasons"></ul></section>
+      </div>
+    </div>
+    <aside class="side" style="display:grid;gap:10px;min-width:0">
+      <h2>Transitions to try</h2>
+      <div class="plans" id="plans"></div>
+      <p class="note">Every option is scored for two basslines or vocals at once, timing off the phrase, energy dips and jumps, tempo and key clashes, and landing on the next song's drums.</p>
+    </aside>
+  </div>
+</div>
+<script>window.SANGAM_OPTIONS = /*OPTIONS*/null;</script>
+<script>window.SANGAM_DEMO = /*DEMO*/null;</script>
+<script>/*APP*/</script>
